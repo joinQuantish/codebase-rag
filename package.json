@@ -1,0 +1,31 @@
+{
+  "name": "codebase-rag",
+  "version": "1.0.0",
+  "description": "Index any GitHub repo and search it via MCP. Keyword + semantic + hybrid search over your codebase.",
+  "module": "src/cli.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "codebase-rag": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "serve": "bun run src/server.ts",
+    "index": "bun run src/cli.ts index",
+    "search": "bun run src/cli.ts search",
+    "query": "bun run src/cli.ts query"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^12.6.2",
+    "glob": "^13.0.3",
+    "zod": "^3.24.0"
+  }
+}
