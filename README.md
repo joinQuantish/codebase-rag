@@ -1,57 +1,67 @@
 # codebase-rag
 
-Index any GitHub repository and search it instantly. Exposes an MCP server so Claude Code, Cursor, or any LLM client can semantically search your codebase.
+Index any GitHub repository and search it instantly. No API keys needed. Runs 100% locally on CPU.
+
+Exposes an MCP server so Claude Code, Cursor, or any LLM client can semantically search your codebase.
 
 ```
-GitHub Repo → Clone → Chunk → Embed → SQLite Index → MCP Server → LLM
+GitHub Repo → Clone → Chunk → Embed (local) → SQLite Index → MCP Server → LLM
 ```
 
 ## Quick Start
 
 ```bash
 # Install
+git clone https://github.com/joinQuantish/codebase-rag
+cd codebase-rag
 bun install
 
-# Index a repo (keyword search — no API key needed)
+# Index any repo (auto-embeds, no API key needed!)
 bun run src/cli.ts index https://github.com/your-org/your-repo
 
-# Index with embeddings (needs OPENAI_API_KEY)
-OPENAI_API_KEY=sk-... bun run src/cli.ts index https://github.com/your-org/your-repo --embed
-
 # Search
-bun run src/cli.ts search "place order"        # keyword (FTS5, ~2ms)
-bun run src/cli.ts vsearch "how does auth work" # semantic (vector similarity)
-bun run src/cli.ts query "error handling flow"  # hybrid (best quality)
+bun run src/cli.ts search "place order"                         # keyword (~2ms)
+bun run src/cli.ts vsearch "how does authentication work"       # semantic (~28ms)
+bun run src/cli.ts query "wallet encryption and key management" # hybrid (best)
 
-# Start MCP server
+# Start MCP server for Claude Code / Cursor
 bun run src/cli.ts serve
 ```
+
+**That's it.** No OpenAI key, no GPU, no external services.
 
 ## How It Works
 
 ### Indexing Pipeline
 1. **Git sync** — Clones or pulls the repo, detects changed files via SHA256 hash
 2. **File filter** — Selects code files (TS, Python, Rust, Go, etc.), skips node_modules/dist/binaries
-3. **Code chunker** — Splits files on function/class boundaries (AST-aware patterns), falls back to 60-line windows with overlap
+3. **Code chunker** — Splits files on function/class boundaries, falls back to 60-line windows with overlap
 4. **FTS5 index** — Every chunk goes into SQLite Full-Text Search with Porter stemming + BM25 ranking
-5. **Vector embed** (optional) — Chunks are embedded via OpenAI API and stored as float32 blobs
+5. **Vector embed** — Chunks embedded locally via all-MiniLM-L6-v2 (22MB ONNX model, runs on CPU)
 
 ### Search Modes
 
-| Mode | Command | Speed | Needs API Key | Best For |
-|------|---------|-------|---------------|----------|
-| Keyword | `search` | ~2ms | No | Function names, exact terms |
-| Semantic | `vsearch` | ~200ms | Yes | Conceptual questions |
-| Hybrid | `query` | ~200ms | Yes* | Best overall accuracy |
+| Mode | Command | Speed | Best For |
+|------|---------|-------|----------|
+| Keyword | `search` | ~2ms | Function names, exact terms |
+| Semantic | `vsearch` | ~28ms | Conceptual questions ("how does X work") |
+| Hybrid | `query` | ~30ms | Best overall accuracy |
 
-*Falls back to keyword-only if no API key is set.
+All three work out of the box, no API keys required.
 
-### Why FTS5 is fast
-Instead of scanning every line of every file (like grep), the index pre-computes an inverted index: `term → [chunk1, chunk5, chunk12]`. Searching is a dictionary lookup, not a full scan. Porter stemming means "searching" matches "search".
+### Embeddings
+
+Default: **all-MiniLM-L6-v2** via `@huggingface/transformers` (ONNX Runtime on CPU)
+- 384-dimensional vectors
+- ~22MB quantized model (auto-downloaded on first run)
+- ~4ms per chunk to embed
+- Cached in `~/.cache/huggingface/`
+
+Optionally swap to OpenAI for higher quality: set `OPENAI_API_KEY` env var.
 
 ## MCP Server
 
-Add to your Claude Code or Cursor config:
+Add to your Claude Code config (`~/.claude.json`) or Cursor MCP settings:
 
 ```json
 {
@@ -60,8 +70,7 @@ Add to your Claude Code or Cursor config:
       "command": "bun",
       "args": ["run", "/path/to/codebase-rag/src/server.ts"],
       "env": {
-        "CODEBASE_RAG_DATA": "/path/to/codebase-rag/data",
-        "OPENAI_API_KEY": "sk-..."
+        "CODEBASE_RAG_DATA": "/path/to/codebase-rag/data"
       }
     }
   }
@@ -70,10 +79,12 @@ Add to your Claude Code or Cursor config:
 
 ### Tools Exposed
 
-- **`search`** — Fast keyword search (FTS5 + BM25)
-- **`semantic_search`** — Vector similarity search
-- **`query`** — Hybrid search (keyword + semantic, RRF fusion)
-- **`stats`** — Index statistics
+| Tool | Description |
+|------|-------------|
+| `search` | Fast keyword search (FTS5 + BM25) |
+| `semantic_search` | Vector similarity search |
+| `query` | Hybrid search (keyword + semantic, RRF fusion) — **recommended** |
+| `stats` | Index statistics |
 
 ## Architecture
 
@@ -83,7 +94,7 @@ src/
   sync.ts      — Git clone/pull + change detection
   chunker.ts   — Code-aware file splitting
   indexer.ts    — SQLite FTS5 + vector storage
-  embedder.ts  — Embedding provider (OpenAI API, swappable)
+  embedder.ts  — Local embeddings (HuggingFace) or OpenAI
   search.ts    — Search engine (keyword, semantic, hybrid)
   server.ts    — MCP server (stdio transport)
 ```
@@ -94,10 +105,10 @@ TypeScript, JavaScript, Python, Rust, Go, Java, Kotlin, C/C++, Ruby, PHP, Swift,
 
 ## Re-indexing
 
-Run `index` again on the same repo — it only re-indexes files whose content hash changed:
+Run `index` again — it only re-indexes files whose content hash changed:
 
 ```bash
-bun run src/cli.ts index https://github.com/your-org/your-repo --embed
+bun run src/cli.ts index https://github.com/your-org/your-repo
 # ✅ Indexed 3 files, skipped 97 unchanged
 ```
 
@@ -105,23 +116,26 @@ bun run src/cli.ts index https://github.com/your-org/your-repo --embed
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENAI_API_KEY` | For semantic search | OpenAI API key for embeddings |
-| `EMBEDDING_BASE_URL` | Optional | Custom OpenAI-compatible endpoint (Ollama, vLLM) |
-| `CODEBASE_RAG_DATA` | Optional | Data directory (default: `./data`) |
+| `OPENAI_API_KEY` | No | Optional: use OpenAI embeddings instead of local |
+| `EMBEDDING_MODEL` | No | Custom HuggingFace model (default: `Xenova/all-MiniLM-L6-v2`) |
+| `EMBEDDING_BASE_URL` | No | Custom OpenAI-compatible endpoint (Ollama, vLLM) |
+| `CODEBASE_RAG_DATA` | No | Data directory (default: `./data`) |
 
 ## Auto-sync (optional)
 
-Set up a cron or GitHub webhook to re-index on push:
+Set up a cron to re-index on a schedule:
 
 ```bash
-# Cron: re-index every 15 minutes
-*/15 * * * * cd /path/to/codebase-rag && bun run src/cli.ts index https://github.com/your-org/your-repo --embed
+# Re-index every 15 minutes
+*/15 * * * * cd /path/to/codebase-rag && bun run src/cli.ts index https://github.com/your-org/your-repo
 ```
+
+Or use a GitHub webhook to trigger on push.
 
 ## Stack
 
 - **Runtime**: Bun
 - **Database**: SQLite (bun:sqlite) with FTS5
-- **Embeddings**: OpenAI text-embedding-3-small (swappable)
-- **MCP**: @modelcontextprotocol/sdk
-- **Zero external infrastructure** — single SQLite file, no Postgres/Pinecone/etc.
+- **Embeddings**: HuggingFace Transformers.js (ONNX, CPU, local)
+- **MCP**: @modelcontextprotocol/sdk (stdio transport)
+- **Zero external infrastructure** — single SQLite file, no API keys, no GPU, no Postgres/Pinecone

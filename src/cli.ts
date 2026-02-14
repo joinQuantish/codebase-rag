@@ -3,7 +3,7 @@
 import { syncRepo, filterIndexableFiles, hashFile } from "./sync";
 import { chunkFile } from "./chunker";
 import { Indexer } from "./indexer";
-import { createEmbedder, type EmbeddingProvider } from "./embedder";
+import { createEmbedder } from "./embedder";
 import { SearchEngine } from "./search";
 
 const DATA_DIR = process.env.CODEBASE_RAG_DATA || "./data";
@@ -37,12 +37,12 @@ async function main() {
 
 async function cmdIndex(args: string[]) {
   if (args.length === 0) {
-    console.error("Usage: codebase-rag index <github-repo-url> [--embed]");
+    console.error("Usage: codebase-rag index <github-repo-url> [--no-embed]");
     process.exit(1);
   }
 
   const repoUrl = args[0];
-  const doEmbed = args.includes("--embed");
+  const skipEmbed = args.includes("--no-embed");
 
   console.log(`\n📦 Syncing ${repoUrl}...`);
   const sync = syncRepo(repoUrl, DATA_DIR);
@@ -73,10 +73,11 @@ async function cmdIndex(args: string[]) {
 
   console.log(`✅ Indexed ${indexed} files, skipped ${skipped} unchanged`);
 
-  // Embed if requested
-  if (doEmbed) {
-    console.log(`\n🧠 Generating embeddings...`);
+  // Embed by default (local model, no API key needed)
+  if (!skipEmbed && allChunks.length > 0) {
+    console.log(`\n🧠 Generating embeddings (local model, no API key needed)...`);
     const embedder = createEmbedder();
+    await embedder.init();
 
     let totalChunks = 0;
     for (const { filePath, chunks } of allChunks) {
@@ -85,12 +86,15 @@ async function cmdIndex(args: string[]) {
         const vectors = await embedder.embed(texts);
         indexer.storeVectors(repoName, filePath, vectors);
         totalChunks += chunks.length;
-        process.stderr.write(`  Embedded ${filePath.replace(/^.*\/repos\/[^/]+\//, "")} (${chunks.length} chunks)\n`);
+        const relPath = filePath.replace(/^.*\/repos\/[^/]+\//, "");
+        process.stderr.write(`  Embedded ${relPath} (${chunks.length} chunks)\n`);
       } catch (e: any) {
         console.error(`  Failed to embed ${filePath}: ${e.message}`);
       }
     }
     console.log(`✅ Embedded ${totalChunks} chunks across ${allChunks.length} files`);
+  } else if (skipEmbed) {
+    console.log(`⏭️  Skipping embeddings (--no-embed flag)`);
   }
 
   const stats = indexer.getStats();
@@ -107,8 +111,8 @@ async function cmdSearch(args: string[], mode: "keyword" | "semantic" | "hybrid"
 
   const indexer = new Indexer(DATA_DIR);
   const embedder = createEmbedder();
-  const hasEmbedder = embedder.modelName !== "embeddinggemma-300m";
-  const engine = new SearchEngine(indexer, hasEmbedder ? embedder : null);
+  await embedder.init();
+  const engine = new SearchEngine(indexer, embedder);
 
   let results;
   const start = performance.now();
@@ -132,7 +136,6 @@ async function cmdSearch(args: string[], mode: "keyword" | "semantic" | "hybrid"
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     console.log(`${i + 1}. ${r.filePath}:${r.startLine}-${r.endLine} (score: ${r.score.toFixed(3)})`);
-    // Show first 3 lines of content
     const preview = r.content.split("\n").slice(0, 4).join("\n");
     console.log(`   ${preview.replace(/\n/g, "\n   ")}`);
     console.log();
@@ -162,8 +165,8 @@ function printUsage() {
 codebase-rag — Index and search any GitHub repository
 
 COMMANDS:
-  index <repo-url> [--embed]   Clone/pull repo and index it
-                                 --embed: also generate vector embeddings
+  index <repo-url> [--no-embed]  Clone/pull repo, index + embed it
+                                   --no-embed: skip vector embeddings
 
   search <query>               Fast keyword search (FTS5 + BM25)
   vsearch <query>              Semantic vector search
@@ -173,16 +176,17 @@ COMMANDS:
   serve                        Start MCP server (stdio transport)
 
 ENVIRONMENT:
-  OPENAI_API_KEY               Required for semantic/hybrid search
-  EMBEDDING_BASE_URL           Custom OpenAI-compatible endpoint (e.g., Ollama)
+  OPENAI_API_KEY               Optional: use OpenAI instead of local model
+  EMBEDDING_BASE_URL           Optional: custom OpenAI-compatible endpoint
+  EMBEDDING_MODEL              Optional: HuggingFace model (default: Xenova/all-MiniLM-L6-v2)
   CODEBASE_RAG_DATA            Data directory (default: ./data)
 
 EXAMPLES:
-  # Index a repo (keyword search only — no API key needed)
-  codebase-rag index https://github.com/joinQuantish/polymarket-mcp
+  # Index a repo (includes embeddings, no API key needed!)
+  codebase-rag index https://github.com/your-org/your-repo
 
-  # Index with embeddings (needs OPENAI_API_KEY)
-  codebase-rag index https://github.com/joinQuantish/polymarket-mcp --embed
+  # Index without embeddings (keyword search only)
+  codebase-rag index https://github.com/your-org/your-repo --no-embed
 
   # Search
   codebase-rag search "place order"

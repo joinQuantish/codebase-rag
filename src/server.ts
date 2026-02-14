@@ -10,8 +10,8 @@ const DATA_DIR = process.env.CODEBASE_RAG_DATA || "./data";
 export async function startServer() {
   const indexer = new Indexer(DATA_DIR);
   const embedder = createEmbedder();
-  const hasEmbedder = embedder.modelName !== "embeddinggemma-300m"; // local = not available
-  const search = new SearchEngine(indexer, hasEmbedder ? embedder : null);
+  await embedder.init();
+  const search = new SearchEngine(indexer, embedder);
 
   const server = new McpServer({
     name: "codebase-rag",
@@ -42,7 +42,7 @@ export async function startServer() {
   // Tool: semantic search (if embedder available)
   server.tool(
     "semantic_search",
-    "Semantic search that understands meaning, not just keywords. Finds conceptually related code even if different words are used. Requires embedding provider (set OPENAI_API_KEY).",
+    "Semantic search that understands meaning, not just keywords. Finds conceptually related code even if different words are used. Uses local embeddings by default (no API key needed).",
     {
       query: z.string().describe("Natural language query about code concepts"),
       limit: z.number().optional().default(10).describe("Max results to return"),
@@ -110,7 +110,7 @@ export async function startServer() {
               `  Code chunks: ${s.totalChunks}`,
               `  Vectors stored: ${s.totalVectors}`,
               `  Repos: ${s.repos.join(", ") || "none"}`,
-              `  Semantic search: ${hasEmbedder ? "available" : "unavailable (set OPENAI_API_KEY)"}`,
+              `  Embedding model: ${embedder.modelName}`,
             ].join("\n"),
           },
         ],

@@ -369,10 +369,11 @@ export interface IndexStats {
 }
 
 // Vector math helpers
-function bufferToFloat32(buf: Buffer): number[] {
+function bufferToFloat32(buf: Uint8Array | Buffer): number[] {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const arr: number[] = [];
-  for (let i = 0; i < buf.length; i += 4) {
-    arr.push(buf.readFloatLE(i));
+  for (let i = 0; i < buf.byteLength; i += 4) {
+    arr.push(view.getFloat32(i, true)); // little-endian
   }
   return arr;
 }
