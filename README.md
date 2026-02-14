@@ -61,7 +61,11 @@ Optionally swap to OpenAI for higher quality: set `OPENAI_API_KEY` env var.
 
 ## MCP Server
 
-Add to your Claude Code config (`~/.claude.json`) or Cursor MCP settings:
+Two modes: **stdio** (local) and **HTTP** (remote/shared).
+
+### Option A: Local (stdio)
+
+For personal use with Claude Code or Cursor. Add to `~/.claude.json`:
 
 ```json
 {
@@ -76,6 +80,35 @@ Add to your Claude Code config (`~/.claude.json`) or Cursor MCP settings:
   }
 }
 ```
+
+### Option B: HTTP (remote)
+
+For sharing with a team. Start the server, anyone can connect:
+
+```bash
+# Start HTTP server
+bun run src/cli.ts serve --http --port=3100
+```
+
+Connect from Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "codebase": {
+      "type": "streamable-http",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+**Endpoints:**
+| Path | Method | Description |
+|------|--------|-------------|
+| `/mcp` | POST/GET/DELETE | MCP protocol (Streamable HTTP) |
+| `/health` | GET | Health check + index stats (JSON) |
+| `/` | GET | Server info + connection instructions |
 
 ### Tools Exposed
 
@@ -96,7 +129,7 @@ src/
   indexer.ts    — SQLite FTS5 + vector storage
   embedder.ts  — Local embeddings (HuggingFace) or OpenAI
   search.ts    — Search engine (keyword, semantic, hybrid)
-  server.ts    — MCP server (stdio transport)
+  server.ts    — MCP server (stdio + HTTP transport)
 ```
 
 ## Supported Languages

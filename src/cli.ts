@@ -28,7 +28,7 @@ async function main() {
       cmdStats();
       break;
     case "serve":
-      await cmdServe();
+      await cmdServe(args);
       break;
     default:
       printUsage();
@@ -155,9 +155,18 @@ function cmdStats() {
   indexer.close();
 }
 
-async function cmdServe() {
-  const { startServer } = await import("./server");
-  await startServer();
+async function cmdServe(args: string[]) {
+  const isHttp = args.includes("--http");
+  const portFlag = args.find((a) => a.startsWith("--port="));
+  const port = portFlag ? parseInt(portFlag.split("=")[1]) : parseInt(process.env.PORT || "3100");
+
+  if (isHttp) {
+    const { startHttpServer } = await import("./server");
+    await startHttpServer(port);
+  } else {
+    const { startStdioServer } = await import("./server");
+    await startStdioServer();
+  }
 }
 
 function printUsage() {
@@ -173,13 +182,16 @@ COMMANDS:
   query <query>                Hybrid search (keyword + semantic)
 
   stats                        Show index statistics
-  serve                        Start MCP server (stdio transport)
+
+  serve                        Start MCP server (stdio, for local use)
+  serve --http [--port=3100]   Start MCP server (HTTP, for remote access)
 
 ENVIRONMENT:
   OPENAI_API_KEY               Optional: use OpenAI instead of local model
   EMBEDDING_BASE_URL           Optional: custom OpenAI-compatible endpoint
   EMBEDDING_MODEL              Optional: HuggingFace model (default: Xenova/all-MiniLM-L6-v2)
   CODEBASE_RAG_DATA            Data directory (default: ./data)
+  PORT                         HTTP server port (default: 3100)
 
 EXAMPLES:
   # Index a repo (includes embeddings, no API key needed!)
@@ -192,8 +204,11 @@ EXAMPLES:
   codebase-rag search "place order"
   codebase-rag query "how does authentication work"
 
-  # Start MCP server for Claude Code / Cursor
+  # Start MCP server (local, stdio)
   codebase-rag serve
+
+  # Start MCP server (remote, HTTP)
+  codebase-rag serve --http --port=3100
 `);
 }
 
