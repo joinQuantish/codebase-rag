@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { syncRepo, filterIndexableFiles, hashFile } from "./sync";
+import { syncRepo, filterIndexableFiles, hashFile, type AuthConfig } from "./sync";
 import { chunkFile } from "./chunker";
 import { Indexer } from "./indexer";
 import { createEmbedder } from "./embedder";
@@ -37,15 +37,22 @@ async function main() {
 
 async function cmdIndex(args: string[]) {
   if (args.length === 0) {
-    console.error("Usage: codebase-rag index <github-repo-url> [--no-embed]");
+    console.error("Usage: codebase-rag index <repo-url> [--token-file=path] [--ssh-key=path] [--no-embed]");
     process.exit(1);
   }
 
   const repoUrl = args[0];
   const skipEmbed = args.includes("--no-embed");
 
+  // Parse auth options
+  const auth: AuthConfig = {};
+  const tokenFileFlag = args.find((a) => a.startsWith("--token-file="));
+  const sshKeyFlag = args.find((a) => a.startsWith("--ssh-key="));
+  if (tokenFileFlag) auth.tokenFile = tokenFileFlag.split("=").slice(1).join("=");
+  if (sshKeyFlag) auth.sshKey = sshKeyFlag.split("=").slice(1).join("=");
+
   console.log(`\n📦 Syncing ${repoUrl}...`);
-  const sync = syncRepo(repoUrl, DATA_DIR);
+  const sync = syncRepo(repoUrl, DATA_DIR, auth);
   const repoName = sync.repoDir.split("/").pop()!;
 
   const files = filterIndexableFiles(sync.allFiles);
@@ -174,8 +181,10 @@ function printUsage() {
 codebase-rag — Index and search any GitHub repository
 
 COMMANDS:
-  index <repo-url> [--no-embed]  Clone/pull repo, index + embed it
-                                   --no-embed: skip vector embeddings
+  index <repo-url> [options]     Clone/pull repo, index + embed it
+    --no-embed                     Skip vector embeddings
+    --token-file=/path/to/token    Read GitHub token from file (private repos)
+    --ssh-key=/path/to/key         Use SSH deploy key (private repos)
 
   search <query>               Fast keyword search (FTS5 + BM25)
   vsearch <query>              Semantic vector search
@@ -186,29 +195,42 @@ COMMANDS:
   serve                        Start MCP server (stdio, for local use)
   serve --http [--port=3100]   Start MCP server (HTTP, for remote access)
 
+PRIVATE REPO AUTH (pick one):
+  1. GITHUB_TOKEN env var        Simplest — export GITHUB_TOKEN=ghp_...
+  2. --token-file=/path          Read token from file (no env var leaks)
+  3. --ssh-key=/path/to/key      Use SSH deploy key (org-friendly)
+
+  Token is NEVER embedded in URLs or command args. Uses git credential
+  helper (GIT_ASKPASS) and cleaned up immediately after clone/pull.
+
 ENVIRONMENT:
-  OPENAI_API_KEY               Optional: use OpenAI instead of local model
-  EMBEDDING_BASE_URL           Optional: custom OpenAI-compatible endpoint
-  EMBEDDING_MODEL              Optional: HuggingFace model (default: Xenova/all-MiniLM-L6-v2)
-  CODEBASE_RAG_DATA            Data directory (default: ./data)
-  PORT                         HTTP server port (default: 3100)
+  GITHUB_TOKEN / GH_TOKEN       GitHub token for private repos
+  OPENAI_API_KEY                 Optional: use OpenAI instead of local model
+  EMBEDDING_BASE_URL             Optional: custom OpenAI-compatible endpoint
+  EMBEDDING_MODEL                Optional: HuggingFace model (default: Xenova/all-MiniLM-L6-v2)
+  CODEBASE_RAG_DATA              Data directory (default: ./data)
+  PORT                           HTTP server port (default: 3100)
 
 EXAMPLES:
-  # Index a repo (includes embeddings, no API key needed!)
+  # Public repo
   codebase-rag index https://github.com/your-org/your-repo
 
-  # Index without embeddings (keyword search only)
-  codebase-rag index https://github.com/your-org/your-repo --no-embed
+  # Private repo (token from env)
+  GITHUB_TOKEN=ghp_abc123 codebase-rag index https://github.com/your-org/private-repo
+
+  # Private repo (token from file — more secure)
+  codebase-rag index https://github.com/your-org/private-repo --token-file=~/.secrets/github-token
+
+  # Private repo (SSH deploy key)
+  codebase-rag index git@github.com:your-org/private-repo.git --ssh-key=~/.ssh/deploy_key
 
   # Search
   codebase-rag search "place order"
   codebase-rag query "how does authentication work"
 
-  # Start MCP server (local, stdio)
-  codebase-rag serve
-
-  # Start MCP server (remote, HTTP)
-  codebase-rag serve --http --port=3100
+  # Start MCP server
+  codebase-rag serve              # local (stdio)
+  codebase-rag serve --http       # remote (HTTP)
 `);
 }
 
